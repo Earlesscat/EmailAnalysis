@@ -1,150 +1,177 @@
 import os
 import pandas as pd
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+from textblob import TextBlob
+import nltk
 from collections import Counter
+import re
 
-# Define expanded keyword lists
-project_keywords = ['Project', 'Task', 'Milestone', 'Progress', 'Delivery', 'Implementation', 'Rollout', 'Launch',
-                    'Completion', 'Achievement', 'Outcome']
-client_keywords = ['Client', 'Customer', 'Service', 'Request', 'Inquiry', 'Support', 'Collaboration', 'Meeting',
-                   'Solution', 'Feedback']
-team_keywords = ['Meeting', 'Sync', 'Discussion', 'Update', 'Teamwork', 'Collaboration', 'Coordination', 'Briefing',
-                 'Review', 'Planning', 'Strategy']
-product_keywords = ['Feature', 'Enhancement', 'Improvement', 'Solution', 'Product', 'Service', 'Quality', 'Vendor',
-                    'Supplier', 'Purchase', 'Procurement']
+# 下载 NLTK 所需的资源
+nltk.download('punkt')
+nltk.download('stopwords')
 
-challenges_keywords = ['Issue', 'Problem', 'Blocker', 'Obstacle', 'Delay', 'Error', 'Defect', 'Failure', 'Concern',
-                       'Pending', 'Setback', 'Bottleneck']
-solutions_keywords = ['Resolution', 'Solution', 'Fix', 'Completed', 'Update', 'Repair', 'Adjusted', 'Improved',
-                      'Repaired', 'Upgraded', 'Resolved', 'Optimized']
+# 加载和处理数据
+def load_and_process_data(file_path):
+    if not os.path.exists(file_path):
+        print(f"Error: File '{file_path}' does not exist.")
+        return None
 
-suggestions_keywords = ['Improve', 'Suggestion', 'Recommendation', 'Enhance', 'Feedback', 'Optimize', 'Upgrade',
-                        'Efficiency', 'Streamline', 'Revise', 'Better', 'Solution', 'Action']
-process_keywords = ['Process', 'Workflow', 'Automation', 'System', 'Structure', 'Efficiency', 'Policy',
-                    'Standardization', 'Procedure']
-tools_keywords = ['Tool', 'Platform', 'System', 'Software', 'Application', 'Integration', 'Technology',
-                  'Infrastructure', 'Upgrade']
+    # 加载 CSV 文件
+    data = pd.read_csv(file_path)
 
-efficiency_keywords = ['Productivity', 'Performance', 'Efficiency', 'Streamline', 'Automate', 'Optimize', 'Minimize',
-                       'Maximize', 'Focus', 'Output', 'Results']
-teamwork_keywords = ['Collaboration', 'Communication', 'Team', 'Engagement', 'Coordination', 'Support', 'Alignment',
-                     'Task', 'Role', 'Responsibility', 'Accountability']
+    # 打印列名以供调试
+    print("Columns in the CSV file:", data.columns.tolist())
 
-processes_keywords = ['Standardization', 'Workflow', 'Policy', 'Documentation', 'Procedure', 'Guidelines',
-                      'Best Practices', 'Governance', 'Compliance', 'Strategy', 'Control', 'Structure']
-improvements_keywords = ['Refinement', 'Adjustments', 'Adaptation', 'Policy Change', 'Realignment', 'Restructure',
-                         'Modification', 'Re-engineering', 'Transition']
+    # 检查必要的列是否存在
+    required_columns = ['Subject', 'ReceivedTime']
+    for col in required_columns:
+        if col not in data.columns:
+            print(f"Error: Required column '{col}' is missing in the CSV file. Exiting.")
+            return None
+
+    # 填充缺失值并清理数据
+    data['ReceivedTime'] = pd.to_datetime(data['ReceivedTime'], errors='coerce')
+    data['Subject_cleaned'] = data['Subject'].fillna('').apply(lambda x: re.sub(r'[^\w\s]', '', str(x).lower()))
+
+    # 如果需要处理正文内容，但正文列不存在，可以跳过或添加一个空列
+    if 'Body' not in data.columns:
+        print("Warning: 'Body' column not found in the CSV file. Skipping body processing.")
+        data['Body_cleaned'] = ''  # 添加一个空的 Body_cleaned 列
+    else:
+        data['Body_cleaned'] = data['Body'].fillna('').apply(lambda x: re.sub(r'[^\w\s]', '', str(x).lower()))
+
+    return data
+
+# 每日工作容量分析
+def daily_work_capacity(data):
+    daily_activity = data.groupby(data['ReceivedTime'].dt.date).size()
+    print("Daily Work Capacity Overview:")
+    print(daily_activity)
+
+    # 绘制每日活动图表
+    daily_activity.plot(kind='bar', figsize=(10, 6))
+    plt.title("Daily Work Capacity Overview")
+    plt.xlabel('Date')
+    plt.ylabel('Number of Emails')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+# 生成词云
+def generate_wordcloud(data):
+    all_subjects = " ".join(data['Subject_cleaned'])
+    wordcloud = WordCloud(width=800, height=400, background_color="white").generate(all_subjects)
+    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.axis("off")
+    plt.title("Word Cloud of Email Subjects")
+    plt.show()
+
+# 情感分析
+def sentiment_analysis(data):
+    print("Sentiment Analysis of Subjects:")
+
+    # 确保所有值为字符串类型，填充缺失值为空字符串
+    data['Subject'] = data['Subject'].fillna("").astype(str)
+
+    sentiment_scores = []
+    for subject in data['Subject']:
+        analysis = TextBlob(subject)
+        sentiment_scores.append(analysis.sentiment.polarity)
+
+    data['Sentiment'] = sentiment_scores
+    print(data[['Subject', 'Sentiment']].head())
+
+    # 绘制情感分布图
+    plt.hist(data['Sentiment'], bins=20, color='skyblue', edgecolor='black')
+    plt.title("Sentiment Distribution of Email Subjects")
+    plt.xlabel("Sentiment Polarity")
+    plt.ylabel("Frequency")
+    plt.show()
+
+# 提取关键词
+def extract_top_keywords(data):
+    print("Top Keywords from Email Subjects:")
+
+    # 将所有主题拼接成一个字符串
+    all_subjects = " ".join(data['Subject_cleaned'])
+
+    # 使用简单的正则表达式分词，替代 NLTK 的 word_tokenize
+    tokens = re.split(r'\W+', all_subjects)
+
+    # 移除停用词
+    stop_words = set(nltk.corpus.stopwords.words('english'))
+    filtered_tokens = [word for word in tokens if word and word.lower() not in stop_words]
+
+    # 统计词频
+    word_freq = Counter(filtered_tokens)
+    top_keywords = word_freq.most_common(10)
+    print("Top 10 Keywords:", top_keywords)
+
+    # 绘制关键词柱状图
+    keywords, counts = zip(*top_keywords)
+    plt.bar(keywords, counts, color='lightgreen')
+    plt.title("Top Keywords in Email Subjects")
+    plt.xlabel("Keywords")
+    plt.ylabel("Frequency")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
 
 
-# Function to read CSV file and select the appropriate one
-def load_csv():
-    # List all CSV files in the current directory
-    files = [f for f in os.listdir() if f.endswith('.csv')]
-    print("Available CSV files:")
+# 项目贡献分析
+def project_contributions(data):
+    print("Key Achievements & Project Contributions:")
+    project_related_words = ['project', 'meeting', 'report', 'submission', 'license', 'order']
 
-    for idx, file in enumerate(files):
-        print(f"{idx + 1}. {file}")
+    project_emails = data[data['Subject_cleaned'].str.contains('|'.join(project_related_words), na=False)]
+    print(f"Found {len(project_emails)} project-related emails")
+    print(project_emails[['Subject', 'Attachments']].head())
 
-    # User selects a file
-    file_index = int(input("Enter the number of the CSV file to analyze: ")) - 1
-    selected_file = files[file_index]
-
-    # Load the CSV file into a pandas dataframe
-    df = pd.read_csv(selected_file)
-    print(f"Loaded file: {selected_file}")
-    return df
-
-
-# Function to perform analysis on Key Achievements (Project Contributions)
-def key_achievements(df):
-    sender_count = df['SenderName'].value_counts().head(5)
-    subject_counts = Counter()
-
-    for subject in df['Subject'].dropna():
-        for keyword in project_keywords + client_keywords + team_keywords + product_keywords:
-            if keyword.lower() in subject.lower():
-                subject_counts[keyword] += 1
-
-    return sender_count, subject_counts
-
-
-# Function to analyze Challenges and Solutions
-def challenges_and_solutions(df):
-    challenges = []
-    solutions = []
-
-    for subject in df['Subject'].dropna():
-        if any(keyword.lower() in subject.lower() for keyword in challenges_keywords):
-            challenges.append(subject)
-        if any(keyword.lower() in subject.lower() for keyword in solutions_keywords):
-            solutions.append(subject)
-
-    return challenges, solutions
-
-
-# Function to analyze Suggestions for Improvement
-def suggestions_for_improvement(df):
-    suggestions = []
-
-    for subject in df['Subject'].dropna():
-        if any(keyword.lower() in subject.lower() for keyword in
-               suggestions_keywords + process_keywords + tools_keywords):
-            suggestions.append(subject)
-
-    return suggestions
-
-
-# Function to analyze Team/Department Efficiency
-def team_efficiency(df):
-    efficiency = []
-
-    for subject in df['Subject'].dropna():
-        if any(keyword.lower() in subject.lower() for keyword in efficiency_keywords + teamwork_keywords):
-            efficiency.append(subject)
-
-    return efficiency
-
-
-# Function to analyze Company Processes
-def company_processes(df):
-    processes = []
-
-    for subject in df['Subject'].dropna():
-        if any(keyword.lower() in subject.lower() for keyword in processes_keywords + improvements_keywords):
-            processes.append(subject)
-
-    return processes
-
-
-# Main function to run the analysis
+# 主函数
 def main():
-    # Load the data
-    df = load_csv()
+    # 自动检测当前目录中的 CSV 文件
+    csv_files = [f for f in os.listdir('.') if f.endswith('.csv')]
 
-    # Perform the analysis
-    sender_count, subject_counts = key_achievements(df)
-    challenges, solutions = challenges_and_solutions(df)
-    suggestions = suggestions_for_improvement(df)
-    efficiency = team_efficiency(df)
-    processes = company_processes(df)
+    if not csv_files:
+        print("No CSV files found in the current directory.")
+        return
 
-    # Display the results
-    print("\n--- Key Achievements (Project Contributions) ---")
-    print(f"Top senders of emails: \n{sender_count}")
-    print(f"Keyword occurrences in email subjects: \n{subject_counts}")
+    # 如果只有一个文件，自动选择
+    if len(csv_files) == 1:
+        print(f"Only one CSV file found: {csv_files[0]}. Using it automatically.")
+        file_path = csv_files[0]
+    else:
+        # 多个文件时，让用户选择
+        print("Select a CSV file for analysis:")
+        for idx, file in enumerate(csv_files):
+            print(f"{idx + 1}. {file}")
 
-    print("\n--- Challenges and Solutions ---")
-    print(f"Identified challenges: \n{challenges}")
-    print(f"Suggested solutions: \n{solutions}")
+        try:
+            choice = int(input("Enter the number corresponding to the file: ")) - 1
+            if choice < 0 or choice >= len(csv_files):
+                print("Invalid choice. Exiting.")
+                return
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+            return
 
-    print("\n--- Suggestions for Improvement ---")
-    print(f"Suggestions for improvement: \n{suggestions}")
+        file_path = csv_files[choice]
 
-    print("\n--- Team/Department Efficiency ---")
-    print(f"Emails related to team efficiency: \n{efficiency}")
+    print(f"Selected file: {file_path}")
 
-    print("\n--- Company Processes ---")
-    print(f"Emails related to company processes: \n{processes}")
+    # 加载并处理数据
+    data = load_and_process_data(file_path)
+    if data is None:
+        return
 
+    # 执行分析
+    daily_work_capacity(data)
+    generate_wordcloud(data)
+    sentiment_analysis(data)
+    extract_top_keywords(data)
+    project_contributions(data)
 
+# 运行主函数
 if __name__ == "__main__":
     main()
